@@ -46,6 +46,11 @@
         <div class="bg-white p-4 rounded shadow mb-4">
             <canvas id="grafico" width="400" height="200"></canvas>
         </div>
+
+        <div class="bg-white p-4 rounded shadow mb-4">
+            <h2 class="text-xl font-semibold mb-2">⚠️ Clientes con conexión inestable (últimas 24h)</h2>
+            <div id="lista-inestables"></div>
+        </div>
         <div class="bg-white p-4 rounded shadow">
             <h2 class="text-xl font-semibold mb-2">Detalle</h2>
             <div id="lista-clientes"></div>
@@ -184,6 +189,61 @@
             cargarDatos();  // refresca la gráfica y la tabla con el nuevo cliente
         }
 
+        const UMBRAL_INESTABILIDAD = 3;  // mínimo de cambios de estado en 24h para considerarse "inestable"
+
+        async function cargarInestables() {
+            try {
+                const desde = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+                const { data, error } = await supabaseClient
+                    .from('eventos')
+                    .select('cliente_id, clientes(nombre, pppoe_user)')
+                    .gte('timestamp', desde);
+
+                if (error) { console.error('Error cargando inestables:', error); return; }
+
+                const conteo = {};
+                data.forEach(ev => {
+                    const id = ev.cliente_id;
+                    if (!conteo[id]) {
+                        conteo[id] = { nombre: ev.clientes.nombre, pppoe: ev.clientes.pppoe_user, cambios: 0 };
+                    }
+                    conteo[id].cambios++;
+                });
+
+                const inestables = Object.values(conteo)
+                    .filter(c => c.cambios >= UMBRAL_INESTABILIDAD)
+                    .sort((a, b) => b.cambios - a.cambios);
+
+                const cont = document.getElementById('lista-inestables');
+                if (inestables.length === 0) {
+                    cont.innerHTML = '<p class="text-sm text-gray-500">Sin clientes inestables detectados en las últimas 24h.</p>';
+                    return;
+                }
+                cont.innerHTML = `
+                    <table class="w-full text-sm">
+                        <thead>
+                            <tr class="bg-gray-200">
+                                <th class="p-2 text-left">Cliente</th>
+                                <th class="p-2 text-left">Usuario PPPoE</th>
+                                <th class="p-2 text-left">Cambios de estado (24h)</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${inestables.map(c => `
+                                <tr class="border-b">
+                                    <td class="p-2">${c.nombre}</td>
+                                    <td class="p-2">${c.pppoe}</td>
+                                    <td class="p-2 font-semibold text-orange-600">${c.cambios}</td>
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                `;
+            } catch (e) {
+                console.error('Error cargando inestables:', e);
+            }
+        }
+
         // Alterna entre pantalla de login y dashboard según el estado de la sesión
         supabaseClient.auth.onAuthStateChange((_event, session) => {
             const haySesion = !!session;
@@ -192,7 +252,8 @@
 
             if (haySesion && !intervaloActivo) {
                 cargarDatos();
-                intervaloActivo = setInterval(cargarDatos, 30000);
+                cargarInestables();
+                intervaloActivo = setInterval(() => { cargarDatos(); cargarInestables(); }, 30000);
             } else if (!haySesion && intervaloActivo) {
                 clearInterval(intervaloActivo);
                 intervaloActivo = null;
