@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="es">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -8,6 +9,7 @@
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
 </head>
+
 <body class="bg-gray-100 p-4">
 
     <!-- Pantalla de inicio de sesión (visible hasta que haya sesión activa) -->
@@ -24,7 +26,8 @@
         <div class="flex justify-between items-center mb-4">
             <h1 class="text-2xl font-bold">Monitor ISP — Estado de clientes</h1>
             <div>
-                <button onclick="toggleFormularioAlta()" class="text-sm bg-blue-600 text-white px-3 py-1 rounded mr-3">+ Nuevo cliente</button>
+                <button onclick="toggleFormularioAlta()" class="text-sm bg-blue-600 text-white px-3 py-1 rounded mr-3">+
+                    Nuevo cliente</button>
                 <button onclick="cerrarSesion()" class="text-sm text-red-600">Cerrar sesión</button>
             </div>
         </div>
@@ -42,7 +45,8 @@
                 <input id="alta-lat" type="text" placeholder="Latitud (opcional)" class="border w-1/2 p-2 rounded">
                 <input id="alta-lng" type="text" placeholder="Longitud (opcional)" class="border w-1/2 p-2 rounded">
             </div>
-            <button onclick="darDeAltaCliente()" class="bg-green-600 text-white px-4 py-2 rounded">Guardar cliente</button>
+            <button onclick="darDeAltaCliente()" class="bg-green-600 text-white px-4 py-2 rounded">Guardar
+                cliente</button>
             <p id="alta-mensaje" class="text-sm mt-2"></p>
         </div>
 
@@ -60,7 +64,17 @@
             <div id="lista-cortes-pon"></div>
         </div>
         <div class="bg-white p-4 rounded shadow">
-            <h2 class="text-xl font-semibold mb-2">Detalle</h2>
+            <div class="flex justify-between items-center mb-2 flex-wrap gap-2">
+                <h2 class="text-xl font-semibold">Detalle</h2>
+                <div class="flex items-center gap-3 text-sm">
+                    <select id="filtro-zona" onchange="aplicarFiltros()" class="border rounded p-1">
+                        <option value="">Todas las zonas</option>
+                    </select>
+                    <span id="filtro-activo" class="text-gray-600"></span>
+                </div>
+            </div>
+            <p class="text-xs text-gray-500 mb-2">Tip: toca una sección de la gráfica para filtrar la tabla por ese
+                estado.</p>
             <div id="lista-clientes"></div>
         </div>
     </div>
@@ -91,13 +105,19 @@
             await supabaseClient.auth.signOut();
         }
 
+        let ultimoDataset = [];
+        let filtroEstado = null;  // null = sin filtro; 'conectado' | 'desconectado' | 'suspendido'
+        let filtroZona = '';      // '' = todas las zonas
+
         async function cargarDatos() {
             try {
                 const { data, error } = await supabaseClient
                     .from('estados_actuales')
-                    .select('cliente_id,estado,session_uptime,updated_at,clientes(nombre,pppoe_user)');
+                    .select('cliente_id,estado,session_uptime,updated_at,clientes(nombre,pppoe_user,zona,pon)');
 
                 if (error) { console.error('Error cargando datos:', error); return; }
+
+                ultimoDataset = data;
 
                 const conectados = data.filter(d => d.estado === "conectado").length;
                 const desconectados = data.filter(d => d.estado === "desconectado").length;
@@ -113,40 +133,87 @@
                             data: [conectados, desconectados, suspendidos],
                             backgroundColor: ['#34d399', '#f87171', '#9ca3af']
                         }]
+                    },
+                    options: {
+                        onClick: (evt, elements) => {
+                            if (elements.length === 0) return;
+                            const estados = ['conectado', 'desconectado', 'suspendido'];
+                            const clicado = estados[elements[0].index];
+                            // Tocar la misma sección otra vez quita el filtro
+                            filtroEstado = (filtroEstado === clicado) ? null : clicado;
+                            renderizarTabla();
+                        }
                     }
                 });
 
-                const lista = document.getElementById('lista-clientes');
-                lista.innerHTML = `
-                    <table class="w-full text-sm">
-                        <thead>
-                            <tr class="bg-gray-200">
-                                <th class="p-2 text-left">Cliente</th>
-                                <th class="p-2 text-left">Usuario PPPoE</th>
-                                <th class="p-2 text-left">Estado</th>
-                                <th class="p-2 text-left">Tiempo de sesión</th>
-                                <th class="p-2 text-left">Última actualización</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            ${data.map(d => `
-                                <tr class="border-b">
-                                    <td class="p-2">${d.clientes.nombre}</td>
-                                    <td class="p-2">${d.clientes.pppoe_user}</td>
-                                    <td class="p-2">
-                                        <span class="inline-block w-3 h-3 rounded-full ${colorEstado(d.estado)}"></span>
-                                        ${d.estado}
-                                    </td>
-                                    <td class="p-2">${d.session_uptime || '-'}</td>
-                                    <td class="p-2">${new Date(d.updated_at).toLocaleString()}</td>
-                                </tr>
-                            `).join('')}
-                        </tbody>
-                    </table>
-                `;
+                actualizarOpcionesZona(data);
+                renderizarTabla();
             } catch (e) {
                 console.error('Error cargando datos:', e);
             }
+        }
+
+        function actualizarOpcionesZona(data) {
+            const select = document.getElementById('filtro-zona');
+            const seleccionActual = select.value;
+            const zonas = [...new Set(data.map(d => d.clientes.zona).filter(Boolean))].sort();
+
+            select.innerHTML = '<option value="">Todas las zonas</option>' +
+                zonas.map(z => `<option value="${z}">${z}</option>`).join('');
+            select.value = seleccionActual;  // conserva la selección al refrescar
+        }
+
+        function aplicarFiltros() {
+            filtroZona = document.getElementById('filtro-zona').value;
+            renderizarTabla();
+        }
+
+        function quitarFiltroEstado() {
+            filtroEstado = null;
+            renderizarTabla();
+        }
+
+        function renderizarTabla() {
+            let datos = ultimoDataset;
+            if (filtroEstado) datos = datos.filter(d => d.estado === filtroEstado);
+            if (filtroZona) datos = datos.filter(d => d.clientes.zona === filtroZona);
+
+            const etiqueta = document.getElementById('filtro-activo');
+            etiqueta.innerHTML = filtroEstado
+                ? `Filtrando: <strong>${filtroEstado}</strong> · <a href="#" onclick="quitarFiltroEstado(); return false;" class="text-blue-600 underline">quitar</a>`
+                : '';
+
+            const lista = document.getElementById('lista-clientes');
+            lista.innerHTML = `
+                <table class="w-full text-sm">
+                    <thead>
+                        <tr class="bg-gray-200">
+                            <th class="p-2 text-left">Cliente</th>
+                            <th class="p-2 text-left">Usuario PPPoE</th>
+                            <th class="p-2 text-left">Zona / PON</th>
+                            <th class="p-2 text-left">Estado</th>
+                            <th class="p-2 text-left">Tiempo de sesión</th>
+                            <th class="p-2 text-left">Última actualización</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${datos.map(d => `
+                            <tr class="border-b">
+                                <td class="p-2">${d.clientes.nombre}</td>
+                                <td class="p-2">${d.clientes.pppoe_user}</td>
+                                <td class="p-2">${d.clientes.zona ? (d.clientes.zona + ' / ' + (d.clientes.pon || '-')) : '-'}</td>
+                                <td class="p-2">
+                                    <span class="inline-block w-3 h-3 rounded-full ${colorEstado(d.estado)}"></span>
+                                    ${d.estado}
+                                </td>
+                                <td class="p-2">${d.session_uptime || '-'}</td>
+                                <td class="p-2">${new Date(d.updated_at).toLocaleString()}</td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+                ${datos.length === 0 ? '<p class="text-sm text-gray-500 mt-2">Sin clientes que coincidan con el filtro.</p>' : ''}
+            `;
         }
 
         function toggleFormularioAlta() {
@@ -316,4 +383,5 @@
         });
     </script>
 </body>
+
 </html>
