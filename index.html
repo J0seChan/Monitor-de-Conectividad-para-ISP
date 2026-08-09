@@ -34,7 +34,10 @@
             <h2 class="text-lg font-semibold mb-2">Registrar cliente nuevo</h2>
             <input id="alta-nombre" type="text" placeholder="Nombre del cliente" class="border w-full p-2 mb-2 rounded">
             <input id="alta-pppoe" type="text" placeholder="Usuario PPPoE" class="border w-full p-2 mb-2 rounded">
-            <input id="alta-pon" type="text" placeholder="Número de PON (opcional)" class="border w-full p-2 mb-2 rounded">
+            <div class="flex gap-2 mb-2">
+                <input id="alta-zona" type="text" placeholder="Zona (ej. Madero)" class="border w-1/2 p-2 rounded">
+                <input id="alta-pon" type="text" placeholder="Número de PON" class="border w-1/2 p-2 rounded">
+            </div>
             <div class="flex gap-2 mb-2">
                 <input id="alta-lat" type="text" placeholder="Latitud (opcional)" class="border w-1/2 p-2 rounded">
                 <input id="alta-lng" type="text" placeholder="Longitud (opcional)" class="border w-1/2 p-2 rounded">
@@ -50,6 +53,11 @@
         <div class="bg-white p-4 rounded shadow mb-4">
             <h2 class="text-xl font-semibold mb-2">⚠️ Clientes con conexión inestable (últimas 24h)</h2>
             <div id="lista-inestables"></div>
+        </div>
+
+        <div class="bg-white p-4 rounded shadow mb-4">
+            <h2 class="text-xl font-semibold mb-2">🚨 Detección de corte masivo (por zona/PON)</h2>
+            <div id="lista-cortes-pon"></div>
         </div>
         <div class="bg-white p-4 rounded shadow">
             <h2 class="text-xl font-semibold mb-2">Detalle</h2>
@@ -149,6 +157,7 @@
         async function darDeAltaCliente() {
             const nombre = document.getElementById('alta-nombre').value.trim();
             const pppoeUser = document.getElementById('alta-pppoe').value.trim();
+            const zona = document.getElementById('alta-zona').value.trim();
             const pon = document.getElementById('alta-pon').value.trim();
             const lat = document.getElementById('alta-lat').value.trim();
             const lng = document.getElementById('alta-lng').value.trim();
@@ -163,6 +172,7 @@
             const { error } = await supabaseClient.from('clientes').insert({
                 nombre: nombre,
                 pppoe_user: pppoeUser,
+                zona: zona || null,
                 pon: pon || null,
                 lat: lat ? parseFloat(lat) : null,
                 lng: lng ? parseFloat(lng) : null
@@ -182,6 +192,7 @@
             mensaje.innerText = 'Cliente registrado correctamente.';
             document.getElementById('alta-nombre').value = '';
             document.getElementById('alta-pppoe').value = '';
+            document.getElementById('alta-zona').value = '';
             document.getElementById('alta-pon').value = '';
             document.getElementById('alta-lat').value = '';
             document.getElementById('alta-lng').value = '';
@@ -244,6 +255,49 @@
             }
         }
 
+        const UMBRAL_CORTE_PON = 2;  // mínimo de clientes caídos a la vez en el mismo PON para marcarlo como corte
+
+        async function cargarCortesPorPON() {
+            try {
+                const { data, error } = await supabaseClient
+                    .from('estados_actuales')
+                    .select('estado, clientes(nombre, pppoe_user, zona, pon)');
+
+                if (error) { console.error('Error cargando cortes por PON:', error); return; }
+
+                const grupos = {};
+                data.forEach(d => {
+                    const zona = d.clientes.zona;
+                    const pon = d.clientes.pon;
+                    if (!zona || !pon) return;  // clientes sin zona/pon asignado se ignoran en esta detección
+
+                    const clave = `${zona} — PON ${pon}`;
+                    if (!grupos[clave]) grupos[clave] = { total: 0, caidos: [] };
+                    grupos[clave].total++;
+                    if (d.estado === 'desconectado') {
+                        grupos[clave].caidos.push(`${d.clientes.nombre} (${d.clientes.pppoe_user})`);
+                    }
+                });
+
+                const alertas = Object.entries(grupos)
+                    .filter(([_, g]) => g.caidos.length >= UMBRAL_CORTE_PON);
+
+                const cont = document.getElementById('lista-cortes-pon');
+                if (alertas.length === 0) {
+                    cont.innerHTML = '<p class="text-sm text-gray-500">Sin patrones de corte masivo detectados en este momento.</p>';
+                    return;
+                }
+                cont.innerHTML = alertas.map(([clave, g]) => `
+                    <div class="border-l-4 border-red-500 bg-red-50 p-3 mb-2 rounded">
+                        <p class="font-semibold text-red-700">🔴 Posible corte de fibra — ${clave}</p>
+                        <p class="text-sm text-gray-700">${g.caidos.length} de ${g.total} clientes caídos: ${g.caidos.join(', ')}</p>
+                    </div>
+                `).join('');
+            } catch (e) {
+                console.error('Error cargando cortes por PON:', e);
+            }
+        }
+
         // Alterna entre pantalla de login y dashboard según el estado de la sesión
         supabaseClient.auth.onAuthStateChange((_event, session) => {
             const haySesion = !!session;
@@ -253,7 +307,8 @@
             if (haySesion && !intervaloActivo) {
                 cargarDatos();
                 cargarInestables();
-                intervaloActivo = setInterval(() => { cargarDatos(); cargarInestables(); }, 30000);
+                cargarCortesPorPON();
+                intervaloActivo = setInterval(() => { cargarDatos(); cargarInestables(); cargarCortesPorPON(); }, 30000);
             } else if (!haySesion && intervaloActivo) {
                 clearInterval(intervaloActivo);
                 intervaloActivo = null;
