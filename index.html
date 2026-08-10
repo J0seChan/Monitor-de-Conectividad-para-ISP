@@ -1,15 +1,18 @@
 <!DOCTYPE html>
 <html lang="es">
-
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Monitor ISP</title>
+
+    <!-- Librerías externas (CDN) -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
-</head>
 
+    <!-- Estilos propios -->
+    <link href="assets/css/style.css" rel="stylesheet">
+</head>
 <body class="bg-gray-100 p-4">
 
     <!-- Pantalla de inicio de sesión (visible hasta que haya sesión activa) -->
@@ -26,8 +29,7 @@
         <div class="flex justify-between items-center mb-4">
             <h1 class="text-2xl font-bold">Monitor ISP — Estado de clientes</h1>
             <div>
-                <button onclick="toggleFormularioAlta()" class="text-sm bg-blue-600 text-white px-3 py-1 rounded mr-3">+
-                    Nuevo cliente</button>
+                <button onclick="toggleFormularioAlta()" class="text-sm bg-blue-600 text-white px-3 py-1 rounded mr-3">+ Nuevo cliente</button>
                 <button onclick="cerrarSesion()" class="text-sm text-red-600">Cerrar sesión</button>
             </div>
         </div>
@@ -45,24 +47,28 @@
                 <input id="alta-lat" type="text" placeholder="Latitud (opcional)" class="border w-1/2 p-2 rounded">
                 <input id="alta-lng" type="text" placeholder="Longitud (opcional)" class="border w-1/2 p-2 rounded">
             </div>
-            <button onclick="darDeAltaCliente()" class="bg-green-600 text-white px-4 py-2 rounded">Guardar
-                cliente</button>
+            <button onclick="darDeAltaCliente()" class="bg-green-600 text-white px-4 py-2 rounded">Guardar cliente</button>
             <p id="alta-mensaje" class="text-sm mt-2"></p>
         </div>
 
+        <!-- Gráfica de estados -->
         <div class="bg-white p-4 rounded shadow mb-4">
             <canvas id="grafico" width="400" height="200"></canvas>
         </div>
 
+        <!-- Panel: conexión inestable -->
         <div class="bg-white p-4 rounded shadow mb-4">
             <h2 class="text-xl font-semibold mb-2">⚠️ Clientes con conexión inestable (últimas 24h)</h2>
             <div id="lista-inestables"></div>
         </div>
 
+        <!-- Panel: corte masivo por zona/PON -->
         <div class="bg-white p-4 rounded shadow mb-4">
             <h2 class="text-xl font-semibold mb-2">🚨 Detección de corte masivo (por zona/PON)</h2>
             <div id="lista-cortes-pon"></div>
         </div>
+
+        <!-- Tabla de detalle con filtros -->
         <div class="bg-white p-4 rounded shadow">
             <div class="flex justify-between items-center mb-2 flex-wrap gap-2">
                 <h2 class="text-xl font-semibold">Detalle</h2>
@@ -73,315 +79,13 @@
                     <span id="filtro-activo" class="text-gray-600"></span>
                 </div>
             </div>
-            <p class="text-xs text-gray-500 mb-2">Tip: toca una sección de la gráfica para filtrar la tabla por ese
-                estado.</p>
+            <p class="text-xs text-gray-500 mb-2">Tip: toca una sección de la gráfica para filtrar la tabla por ese estado.</p>
             <div id="lista-clientes"></div>
         </div>
     </div>
 
-    <script>
-        // ⚠️ Reemplaza estos dos valores con los tuyos:
-        const SUPABASE_URL = "https://fiutwgogaatwhcehhewr.supabase.co";
-        const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZpdXR3Z29nYWF0d2hjZWhoZXdyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODMwMDQ0MTAsImV4cCI6MjA5ODU4MDQxMH0.3UwYw9569iexdPb93IWBYkzCkdIe1QaI843xfNLaCHc";
-
-        const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-        let chartInstance = null;
-        let intervaloActivo = null;
-
-        function colorEstado(estado) {
-            if (estado === "conectado") return "bg-green-500";
-            if (estado === "suspendido") return "bg-gray-400";
-            return "bg-red-500";
-        }
-
-        async function iniciarSesion() {
-            const email = document.getElementById('login-email').value;
-            const password = document.getElementById('login-password').value;
-            const { error } = await supabaseClient.auth.signInWithPassword({ email, password });
-            document.getElementById('login-error').innerText = error ? error.message : '';
-        }
-
-        async function cerrarSesion() {
-            await supabaseClient.auth.signOut();
-        }
-
-        let ultimoDataset = [];
-        let filtroEstado = null;  // null = sin filtro; 'conectado' | 'desconectado' | 'suspendido'
-        let filtroZona = '';      // '' = todas las zonas
-
-        async function cargarDatos() {
-            try {
-                const { data, error } = await supabaseClient
-                    .from('estados_actuales')
-                    .select('cliente_id,estado,session_uptime,updated_at,clientes(nombre,pppoe_user,zona,pon)');
-
-                if (error) { console.error('Error cargando datos:', error); return; }
-
-                ultimoDataset = data;
-
-                const conectados = data.filter(d => d.estado === "conectado").length;
-                const desconectados = data.filter(d => d.estado === "desconectado").length;
-                const suspendidos = data.filter(d => d.estado === "suspendido").length;
-
-                const ctx = document.getElementById('grafico').getContext('2d');
-                if (chartInstance) chartInstance.destroy();
-                chartInstance = new Chart(ctx, {
-                    type: 'doughnut',
-                    data: {
-                        labels: ['Conectados', 'Desconectados', 'Suspendidos'],
-                        datasets: [{
-                            data: [conectados, desconectados, suspendidos],
-                            backgroundColor: ['#34d399', '#f87171', '#9ca3af']
-                        }]
-                    },
-                    options: {
-                        onClick: (evt, elements) => {
-                            if (elements.length === 0) return;
-                            const estados = ['conectado', 'desconectado', 'suspendido'];
-                            const clicado = estados[elements[0].index];
-                            // Tocar la misma sección otra vez quita el filtro
-                            filtroEstado = (filtroEstado === clicado) ? null : clicado;
-                            renderizarTabla();
-                        }
-                    }
-                });
-
-                actualizarOpcionesZona(data);
-                renderizarTabla();
-            } catch (e) {
-                console.error('Error cargando datos:', e);
-            }
-        }
-
-        function actualizarOpcionesZona(data) {
-            const select = document.getElementById('filtro-zona');
-            const seleccionActual = select.value;
-            const zonas = [...new Set(data.map(d => d.clientes.zona).filter(Boolean))].sort();
-
-            select.innerHTML = '<option value="">Todas las zonas</option>' +
-                zonas.map(z => `<option value="${z}">${z}</option>`).join('');
-            select.value = seleccionActual;  // conserva la selección al refrescar
-        }
-
-        function aplicarFiltros() {
-            filtroZona = document.getElementById('filtro-zona').value;
-            renderizarTabla();
-        }
-
-        function quitarFiltroEstado() {
-            filtroEstado = null;
-            renderizarTabla();
-        }
-
-        function renderizarTabla() {
-            let datos = ultimoDataset;
-            if (filtroEstado) datos = datos.filter(d => d.estado === filtroEstado);
-            if (filtroZona) datos = datos.filter(d => d.clientes.zona === filtroZona);
-
-            const etiqueta = document.getElementById('filtro-activo');
-            etiqueta.innerHTML = filtroEstado
-                ? `Filtrando: <strong>${filtroEstado}</strong> · <a href="#" onclick="quitarFiltroEstado(); return false;" class="text-blue-600 underline">quitar</a>`
-                : '';
-
-            const lista = document.getElementById('lista-clientes');
-            lista.innerHTML = `
-                <table class="w-full text-sm">
-                    <thead>
-                        <tr class="bg-gray-200">
-                            <th class="p-2 text-left">Cliente</th>
-                            <th class="p-2 text-left">Usuario PPPoE</th>
-                            <th class="p-2 text-left">Zona / PON</th>
-                            <th class="p-2 text-left">Estado</th>
-                            <th class="p-2 text-left">Tiempo de sesión</th>
-                            <th class="p-2 text-left">Última actualización</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        ${datos.map(d => `
-                            <tr class="border-b">
-                                <td class="p-2">${d.clientes.nombre}</td>
-                                <td class="p-2">${d.clientes.pppoe_user}</td>
-                                <td class="p-2">${d.clientes.zona ? (d.clientes.zona + ' / ' + (d.clientes.pon || '-')) : '-'}</td>
-                                <td class="p-2">
-                                    <span class="inline-block w-3 h-3 rounded-full ${colorEstado(d.estado)}"></span>
-                                    ${d.estado}
-                                </td>
-                                <td class="p-2">${d.session_uptime || '-'}</td>
-                                <td class="p-2">${new Date(d.updated_at).toLocaleString()}</td>
-                            </tr>
-                        `).join('')}
-                    </tbody>
-                </table>
-                ${datos.length === 0 ? '<p class="text-sm text-gray-500 mt-2">Sin clientes que coincidan con el filtro.</p>' : ''}
-            `;
-        }
-
-        function toggleFormularioAlta() {
-            document.getElementById('form-alta').classList.toggle('hidden');
-            document.getElementById('alta-mensaje').innerText = '';
-        }
-
-        async function darDeAltaCliente() {
-            const nombre = document.getElementById('alta-nombre').value.trim();
-            const pppoeUser = document.getElementById('alta-pppoe').value.trim();
-            const zona = document.getElementById('alta-zona').value.trim();
-            const pon = document.getElementById('alta-pon').value.trim();
-            const lat = document.getElementById('alta-lat').value.trim();
-            const lng = document.getElementById('alta-lng').value.trim();
-            const mensaje = document.getElementById('alta-mensaje');
-
-            if (!nombre || !pppoeUser) {
-                mensaje.className = 'text-sm mt-2 text-red-600';
-                mensaje.innerText = 'Nombre y usuario PPPoE son obligatorios.';
-                return;
-            }
-
-            const { error } = await supabaseClient.from('clientes').insert({
-                nombre: nombre,
-                pppoe_user: pppoeUser,
-                zona: zona || null,
-                pon: pon || null,
-                lat: lat ? parseFloat(lat) : null,
-                lng: lng ? parseFloat(lng) : null
-            });
-
-            if (error) {
-                mensaje.className = 'text-sm mt-2 text-red-600';
-                if (error.code === '23505') {  // violación de UNIQUE
-                    mensaje.innerText = 'Ya existe un cliente con ese usuario PPPoE.';
-                } else {
-                    mensaje.innerText = 'Error al guardar: ' + error.message;
-                }
-                return;
-            }
-
-            mensaje.className = 'text-sm mt-2 text-green-600';
-            mensaje.innerText = 'Cliente registrado correctamente.';
-            document.getElementById('alta-nombre').value = '';
-            document.getElementById('alta-pppoe').value = '';
-            document.getElementById('alta-zona').value = '';
-            document.getElementById('alta-pon').value = '';
-            document.getElementById('alta-lat').value = '';
-            document.getElementById('alta-lng').value = '';
-
-            cargarDatos();  // refresca la gráfica y la tabla con el nuevo cliente
-        }
-
-        const UMBRAL_INESTABILIDAD = 3;  // mínimo de cambios de estado en 24h para considerarse "inestable"
-
-        async function cargarInestables() {
-            try {
-                const desde = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-                const { data, error } = await supabaseClient
-                    .from('eventos')
-                    .select('cliente_id, clientes(nombre, pppoe_user)')
-                    .gte('timestamp', desde);
-
-                if (error) { console.error('Error cargando inestables:', error); return; }
-
-                const conteo = {};
-                data.forEach(ev => {
-                    const id = ev.cliente_id;
-                    if (!conteo[id]) {
-                        conteo[id] = { nombre: ev.clientes.nombre, pppoe: ev.clientes.pppoe_user, cambios: 0 };
-                    }
-                    conteo[id].cambios++;
-                });
-
-                const inestables = Object.values(conteo)
-                    .filter(c => c.cambios >= UMBRAL_INESTABILIDAD)
-                    .sort((a, b) => b.cambios - a.cambios);
-
-                const cont = document.getElementById('lista-inestables');
-                if (inestables.length === 0) {
-                    cont.innerHTML = '<p class="text-sm text-gray-500">Sin clientes inestables detectados en las últimas 24h.</p>';
-                    return;
-                }
-                cont.innerHTML = `
-                    <table class="w-full text-sm">
-                        <thead>
-                            <tr class="bg-gray-200">
-                                <th class="p-2 text-left">Cliente</th>
-                                <th class="p-2 text-left">Usuario PPPoE</th>
-                                <th class="p-2 text-left">Cambios de estado (24h)</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            ${inestables.map(c => `
-                                <tr class="border-b">
-                                    <td class="p-2">${c.nombre}</td>
-                                    <td class="p-2">${c.pppoe}</td>
-                                    <td class="p-2 font-semibold text-orange-600">${c.cambios}</td>
-                                </tr>
-                            `).join('')}
-                        </tbody>
-                    </table>
-                `;
-            } catch (e) {
-                console.error('Error cargando inestables:', e);
-            }
-        }
-
-        const UMBRAL_CORTE_PON = 2;  // mínimo de clientes caídos a la vez en el mismo PON para marcarlo como corte
-
-        async function cargarCortesPorPON() {
-            try {
-                const { data, error } = await supabaseClient
-                    .from('estados_actuales')
-                    .select('estado, clientes(nombre, pppoe_user, zona, pon)');
-
-                if (error) { console.error('Error cargando cortes por PON:', error); return; }
-
-                const grupos = {};
-                data.forEach(d => {
-                    const zona = d.clientes.zona;
-                    const pon = d.clientes.pon;
-                    if (!zona || !pon) return;  // clientes sin zona/pon asignado se ignoran en esta detección
-
-                    const clave = `${zona} — PON ${pon}`;
-                    if (!grupos[clave]) grupos[clave] = { total: 0, caidos: [] };
-                    grupos[clave].total++;
-                    if (d.estado === 'desconectado') {
-                        grupos[clave].caidos.push(`${d.clientes.nombre} (${d.clientes.pppoe_user})`);
-                    }
-                });
-
-                const alertas = Object.entries(grupos)
-                    .filter(([_, g]) => g.caidos.length >= UMBRAL_CORTE_PON);
-
-                const cont = document.getElementById('lista-cortes-pon');
-                if (alertas.length === 0) {
-                    cont.innerHTML = '<p class="text-sm text-gray-500">Sin patrones de corte masivo detectados en este momento.</p>';
-                    return;
-                }
-                cont.innerHTML = alertas.map(([clave, g]) => `
-                    <div class="border-l-4 border-red-500 bg-red-50 p-3 mb-2 rounded">
-                        <p class="font-semibold text-red-700">🔴 Posible corte de fibra — ${clave}</p>
-                        <p class="text-sm text-gray-700">${g.caidos.length} de ${g.total} clientes caídos: ${g.caidos.join(', ')}</p>
-                    </div>
-                `).join('');
-            } catch (e) {
-                console.error('Error cargando cortes por PON:', e);
-            }
-        }
-
-        // Alterna entre pantalla de login y dashboard según el estado de la sesión
-        supabaseClient.auth.onAuthStateChange((_event, session) => {
-            const haySesion = !!session;
-            document.getElementById('login-box').classList.toggle('hidden', haySesion);
-            document.getElementById('dashboard').classList.toggle('hidden', !haySesion);
-
-            if (haySesion && !intervaloActivo) {
-                cargarDatos();
-                cargarInestables();
-                cargarCortesPorPON();
-                intervaloActivo = setInterval(() => { cargarDatos(); cargarInestables(); cargarCortesPorPON(); }, 30000);
-            } else if (!haySesion && intervaloActivo) {
-                clearInterval(intervaloActivo);
-                intervaloActivo = null;
-            }
-        });
-    </script>
+    <!-- Configuración y lógica (en este orden: config primero, luego la app) -->
+    <script src="assets/js/config.js"></script>
+    <script src="assets/js/app.js"></script>
 </body>
-
 </html>
