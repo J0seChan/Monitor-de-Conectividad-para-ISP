@@ -63,28 +63,6 @@ simulador_mikrotik.py   # Fuente de datos simulada para desarrollo
 
 ---
 
-## Configuración
-
-### Frontend
-
-1. Edita `assets/js/config.js` y coloca la URL y la clave anónima (`anon`) de tu proyecto de Supabase.
-2. Abre `index.html` en un navegador, o publícalo con GitHub Pages.
-
-> La clave `anon` es pública por diseño: no da acceso a los datos por sí sola, ya que las políticas RLS de Supabase exigen un inicio de sesión válido.
-
-### Worker (se ejecuta aparte, fuera de este repositorio)
-
-1. Instala las dependencias: `pip install supabase python-dotenv librouteros`
-2. Crea un archivo `.env` junto al worker con tus credenciales (incluida la clave `service_role`, que **nunca** debe subirse a ningún repositorio ni exponerse en el frontend):
-   ```
-   SUPABASE_URL=https://tudominio.supabase.co
-   SUPABASE_SERVICE_KEY=tu-clave-service-role
-   # MODO=produccion   (sin esta línea, el worker arranca en modo simulación)
-   ```
-3. Ejecuta: `python worker.py` (por defecto arranca en modo simulación; define `MODO=produccion` para conectar al MikroTik real).
-
----
-
 ## Seguridad
 
 - La clave `service_role` (acceso total, usada por el worker) se mantiene solo en el backend, mediante variables de entorno; nunca se incluye en el frontend ni en el repositorio.
