@@ -41,9 +41,12 @@ Desarrollado como parte de una residencia profesional para **Link Redes** (Tecno
 ```
 .
 ├── index.html              # Página principal del dashboard
+├── manifest.json           # Manifiesto PWA (nombre, colores, íconos)
+├── sw.js                   # Service worker (caché del cascarón + modo sin conexión)
 ├── assets/
 │   ├── css/
 │   │   └── style.css       # Estilos propios
+│   ├── icons/              # Íconos de la app (192, 512 y maskable)
 │   └── js/
 │       ├── config.js       # Credenciales de Supabase (editar antes de usar)
 │       └── app.js          # Lógica del dashboard
@@ -60,6 +63,42 @@ worker.py               # Recolector de estados (escribe en Supabase)
 simulador_mikrotik.py   # Fuente de datos simulada para desarrollo
 .env                    # Credenciales reales — NUNCA se sube a ningún repositorio
 ```
+
+---
+
+## Configuración
+
+### Frontend
+
+1. Edita `assets/js/config.js` y coloca la URL y la clave anónima (`anon`) de tu proyecto de Supabase.
+2. Abre `index.html` en un navegador, o publícalo con GitHub Pages.
+
+> La clave `anon` es pública por diseño: no da acceso a los datos por sí sola, ya que las políticas RLS de Supabase exigen un inicio de sesión válido.
+
+### Worker (se ejecuta aparte, fuera de este repositorio)
+
+1. Instala las dependencias: `pip install supabase python-dotenv librouteros`
+2. Crea un archivo `.env` junto al worker con tus credenciales (incluida la clave `service_role`, que **nunca** debe subirse a ningún repositorio ni exponerse en el frontend):
+   ```
+   SUPABASE_URL=https://tudominio.supabase.co
+   SUPABASE_SERVICE_KEY=tu-clave-service-role
+   # MODO=produccion   (sin esta línea, el worker arranca en modo simulación)
+   ```
+3. Ejecuta: `python worker.py` (por defecto arranca en modo simulación; define `MODO=produccion` para conectar al MikroTik real).
+
+---
+
+## Instalación como app (PWA)
+
+La aplicación es instalable en celular y escritorio (requiere HTTPS, que GitHub Pages ya provee):
+
+- **Android / Chrome o Edge:** menú ⋮ → *Instalar app* (o *Agregar a pantalla de inicio*).
+- **iPhone / Safari:** botón Compartir → *Agregar a inicio*.
+- **Escritorio (Chrome/Edge):** ícono de instalar en la barra de direcciones.
+
+El service worker guarda en caché únicamente los archivos de la interfaz. Los datos de Supabase **nunca** se almacenan en caché: son sensibles (protegidos por login) y deben mostrarse siempre actualizados. Sin conexión, la app abre y muestra un aviso, pero no carga datos.
+
+Al publicar cambios en los archivos, incrementa la versión `CACHE` en `sw.js` (`monitor-isp-v1` → `v2`) para que los dispositivos limpien el caché anterior.
 
 ---
 

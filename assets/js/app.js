@@ -319,3 +319,23 @@ supabaseClient.auth.onAuthStateChange((_event, session) => {
         intervaloActivo = null;
     }
 });
+
+// ---------- PWA: aviso sin conexión + service worker ----------
+
+function actualizarAvisoConexion() {
+    document.getElementById('aviso-offline').classList.toggle('hidden', navigator.onLine);
+}
+
+window.addEventListener('online', () => {
+    actualizarAvisoConexion();
+    if (intervaloActivo) refrescarTodo();  // al volver el internet, refresca de inmediato
+});
+window.addEventListener('offline', actualizarAvisoConexion);
+actualizarAvisoConexion();
+
+if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+        navigator.serviceWorker.register('sw.js')
+            .catch(err => console.error('No se pudo registrar el service worker:', err));
+    });
+}
